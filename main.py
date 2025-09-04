@@ -38,6 +38,41 @@ def send_message(chat_id, text):
         logger.error(f"Send message error: {e}")
         return None
 
+def is_real_order(text):
+    """Проверка является ли сообщение реальным заказом"""
+    if not text or len(text.strip()) < 5:
+        return False
+    
+    # Ключевые слова для заказов
+    order_keywords = [
+        'купить', 'заказать', 'найти', 'нужно', 'хочу', 'ищу', 'товар', 'цена', 'стоимость',
+        'доставка', 'китай', 'алиэкспресс', 'alibaba', 'taobao', '1688', 'dhgate',
+        'сколько стоит', 'где купить', 'как заказать', 'помогите найти'
+    ]
+    
+    # Исключаем простые фразы
+    exclude_phrases = [
+        'привет', 'hello', 'hi', 'спасибо', 'thanks', 'ok', 'да', 'нет', 'yes', 'no',
+        'хорошо', 'понятно', 'ясно', 'ок', 'окей', 'okay'
+    ]
+    
+    text_lower = text.lower().strip()
+    
+    # Если это исключенная фраза
+    if text_lower in exclude_phrases or len(text_lower) < 5:
+        return False
+    
+    # Если содержит ключевые слова заказа
+    for keyword in order_keywords:
+        if keyword in text_lower:
+            return True
+    
+    # Если длинное сообщение (вероятно описание товара)
+    if len(text.strip()) > 20:
+        return True
+    
+    return False
+
 def notify_manager(user_id, username, user_name, message_type, content):
     """Уведомление менеджера о новом запросе"""
     try:
@@ -62,14 +97,27 @@ def notify_manager(user_id, username, user_name, message_type, content):
         
         logger.info(f"📤 Sending notification to manager: {notification_text[:100]}...")
         
-        # Отправляем уведомление менеджеру
-        result = send_message(MANAGER_CHAT_ID, notification_text)
-        
-        if result:
-            logger.info(f"✅ Manager notification sent successfully to {MANAGER_CHAT_ID}")
-            return True
-        else:
-            logger.error(f"❌ Failed to send notification to {MANAGER_CHAT_ID}")
+        # Отправляем уведомление менеджеру напрямую через API
+        try:
+            url = f"{BOT_URL}/sendMessage"
+            data = {
+                'chat_id': str(MANAGER_CHAT_ID),
+                'text': notification_text
+            }
+            response = requests.post(url, json=data, timeout=10)
+            result = response.json()
+            
+            logger.info(f"📊 Manager notification response: {result}")
+            
+            if response.status_code == 200 and result.get('ok'):
+                logger.info(f"✅ Manager notification sent successfully to {MANAGER_CHAT_ID}")
+                return True
+            else:
+                logger.error(f"❌ Failed to send notification: {result}")
+                return False
+                
+        except Exception as api_error:
+            logger.error(f"❌ API error sending to manager: {api_error}")
             return False
         
     except Exception as e:
@@ -171,11 +219,17 @@ def webhook():
             elif 'text' in message:
                 text = message['text']
                 if text != '/start':  # Не уведомляем о команде /start
-                    # Уведомляем менеджера
-                    notify_manager(user_id, username, user_name, "text", text)
-                    
-                    response_text = f"📝 Спасибо за запрос, {user_name}!\n\n💬 Ваш запрос: {text}\n\n✅ Заявка принята в обработку.\n\n👨‍💼 Наш менеджер уже получил уведомление и свяжется с вами в ближайшие 15 минут."
-                    send_message(chat_id, response_text)
+                    # Проверяем является ли это реальным заказом
+                    if is_real_order(text):
+                        # Уведомляем менеджера только для реальных заказов
+                        notify_manager(user_id, username, user_name, "text", text)
+                        
+                        response_text = f"📝 Спасибо за запрос, {user_name}!\n\n💬 Ваш запрос: {text}\n\n✅ Заявка принята в обработку.\n\n👨‍💼 Наш менеджер уже получил уведомление и свяжется с вами в ближайшие 15 минут."
+                        send_message(chat_id, response_text)
+                    else:
+                        # Простой ответ на обычные сообщения
+                        response_text = f"Привет, {user_name}! 👋\n\nДля поиска товаров в Китае:\n📸 Отправьте фото товара\n📝 Или опишите что ищете\n\nНапример: \"Хочу найти беспроводные наушники\" или \"Нужна куртка как на фото\""
+                        send_message(chat_id, response_text)
         
         return "OK", 200
     except Exception as e:
