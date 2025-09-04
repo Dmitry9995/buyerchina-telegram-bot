@@ -65,10 +65,13 @@ def main():
         sys.exit(1)
     
     try:
-        # Импортируем и запускаем бота
-        from bot_production import main as bot_main
-        logger.info("🤖 Launching bot...")
-        bot_main()
+        # Импортируем и запускаем Flask приложение
+        from main import app
+        logger.info("🤖 Launching Flask app...")
+        
+        # Получаем порт от Railway
+        port = int(os.getenv('PORT', 5000))
+        app.run(host='0.0.0.0', port=port)
         
     except ImportError as e:
         logger.error(f"❌ Import error: {e}")
