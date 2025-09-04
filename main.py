@@ -75,26 +75,19 @@ def webhook():
         logger.error(f"Webhook error: {e}")
         return "Error", 500
 
-def setup_telegram_bot():
-    """Настройка Telegram бота"""
-    global telegram_app, bot_token
-    
-    bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
-    if not bot_token:
-        logger.error("TELEGRAM_BOT_TOKEN not found!")
-        return False
-    
-    logger.info(f"Setting up bot: {bot_token[:10]}...")
-    
-    # Создаем приложение
-    telegram_app = Application.builder().token(bot_token).build()
-    
-    # Добавляем обработчики
-    telegram_app.add_handler(CommandHandler("start", start_command))
-    telegram_app.add_handler(MessageHandler(filters.ALL, handle_message))
-    
-    logger.info("Bot handlers registered")
-    return True
+def send_message(chat_id, text):
+    try:
+        url = f"{BOT_URL}/sendMessage"
+        data = {
+            'chat_id': chat_id,
+            'text': text,
+            'parse_mode': 'Markdown'
+        }
+        response = requests.post(url, json=data, timeout=10)
+        logger.info(f"Message sent to {chat_id}: {response.status_code}")
+        return response.json()
+    except Exception as e:
+        logger.error(f"Send message error: {e}")
 
 def setup_webhook():
     """Настройка webhook для Railway"""
@@ -105,7 +98,7 @@ def setup_webhook():
             webhook_url = f"https://{railway_url}/webhook"
         else:
             # Fallback URL - нужно заменить на ваш реальный URL
-            webhook_url = f"https://web-production-6947718c.up.railway.app/webhook"
+            webhook_url = f"https://web-production-ea35.up.railway.app/webhook"
         
         # Удаляем старый webhook
         delete_url = f"{BOT_URL}/deleteWebhook"
@@ -148,15 +141,10 @@ def webhook_info():
         return {"error": str(e)}
 
 if __name__ == '__main__':
-    logger.info("Starting BuyerChina Bot...")
+    # Настраиваем webhook при запуске
+    setup_webhook()
     
-    if setup_telegram_bot():
-        setup_webhook()
-        
-        # Запускаем Flask
-        port = int(os.environ.get('PORT', 8080))
-        logger.info(f"Starting server on port {port}")
-        app.run(host='0.0.0.0', port=port, debug=False)
-    else:
-        logger.error("Bot setup failed!")
-        exit(1)
+    # Запускаем Flask приложение
+    port = int(os.getenv('PORT', 5000))
+    logger.info(f"🚀 Starting server on port {port}")
+    app.run(host='0.0.0.0', port=port, debug=False)
