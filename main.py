@@ -21,6 +21,9 @@ if not BOT_TOKEN:
 BOT_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 logger.info(f"Bot initialized: {BOT_TOKEN[:10]}...")
 
+# Настройки менеджера
+MANAGER_CHAT_ID = os.getenv('MANAGER_CHAT_ID', '1169659218')  # ID чата менеджера
+
 def send_message(chat_id, text):
     try:
         url = f"{BOT_URL}/sendMessage"
@@ -34,6 +37,35 @@ def send_message(chat_id, text):
     except Exception as e:
         logger.error(f"Send message error: {e}")
         return None
+
+def notify_manager(user_id, username, user_name, message_type, content):
+    """Уведомление менеджера о новом запросе"""
+    try:
+        if message_type == "photo":
+            notification_text = (
+                f"📸 НОВЫЙ ЗАПРОС - ФОТО\n\n"
+                f"👤 Пользователь: {user_name} (@{username if username else 'без username'})\n"
+                f"🆔 ID: {user_id}\n\n"
+                f"📝 Пользователь загрузил фото товара для поиска аналогов в Китае.\n\n"
+                f"⏰ Требуется связаться в течение 15 минут!"
+            )
+        else:
+            notification_text = (
+                f"📝 НОВЫЙ ЗАПРОС - ТЕКСТ\n\n"
+                f"👤 Пользователь: {user_name} (@{username if username else 'без username'})\n"
+                f"🆔 ID: {user_id}\n\n"
+                f"💬 Запрос: {content}\n\n"
+                f"⏰ Требуется связаться в течение 15 минут!"
+            )
+        
+        # Отправляем уведомление менеджеру
+        send_message(MANAGER_CHAT_ID, notification_text)
+        logger.info(f"✅ Manager notified about request from user {user_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to notify manager: {e}")
+        return False
 
 def setup_webhook():
     """Setup webhook for Railway"""
@@ -93,20 +125,30 @@ def webhook():
         if 'message' in data:
             message = data['message']
             chat_id = message['chat']['id']
-            user_name = message.get('from', {}).get('first_name', 'User')
+            user_data = message.get('from', {})
+            user_id = user_data.get('id')
+            user_name = user_data.get('first_name', 'Пользователь')
+            username = user_data.get('username', '')
             
             if 'text' in message and message['text'] == '/start':
-                welcome_text = f"Welcome to BuyerChina, {user_name}! Your assistant for shopping in China."
+                welcome_text = f"🇨🇳 Добро пожаловать в BuyerChina, {user_name}!\n\nВаш помощник для покупок в Китае.\nОтправьте фото товара или его описание для поиска аналогов."
                 send_message(chat_id, welcome_text)
                 
             elif 'photo' in message:
-                response_text = f"Thank you for the photo, {user_name}! Our manager will contact you soon."
+                # Уведомляем менеджера
+                notify_manager(user_id, username, user_name, "photo", "Фото загружено")
+                
+                response_text = f"📸 Спасибо за фото, {user_name}!\n\n✅ Ваша заявка принята в обработку.\n\n👨‍💼 Наш менеджер уже получил уведомление и свяжется с вами в ближайшие 15 минут.\n\n🔍 Мы найдем лучшие предложения от проверенных поставщиков в Китае!"
                 send_message(chat_id, response_text)
                 
             elif 'text' in message:
                 text = message['text']
-                response_text = f"Thank you for your request, {user_name}! Our manager will process your request."
-                send_message(chat_id, response_text)
+                if text != '/start':  # Не уведомляем о команде /start
+                    # Уведомляем менеджера
+                    notify_manager(user_id, username, user_name, "text", text)
+                    
+                    response_text = f"📝 Спасибо за запрос, {user_name}!\n\n💬 Ваш запрос: {text}\n\n✅ Заявка принята в обработку.\n\n👨‍💼 Наш менеджер уже получил уведомление и свяжется с вами в ближайшие 15 минут."
+                    send_message(chat_id, response_text)
         
         return "OK", 200
     except Exception as e:
