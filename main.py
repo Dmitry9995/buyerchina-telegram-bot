@@ -53,6 +53,17 @@ def init_google_sheets():
             logger.warning("GOOGLE_CREDENTIALS_JSON not found in environment")
             return False
         
+        # Очищаем JSON от лишних символов и пробелов
+        google_creds_json = google_creds_json.strip()
+        if google_creds_json.startswith('"') and google_creds_json.endswith('"'):
+            google_creds_json = google_creds_json[1:-1]
+        
+        # Заменяем экранированные кавычки
+        google_creds_json = google_creds_json.replace('\\"', '"')
+        google_creds_json = google_creds_json.replace('\\n', '\n')
+        
+        logger.info(f"JSON length: {len(google_creds_json)}, starts with: {google_creds_json[:50]}...")
+        
         # Парсим JSON credentials
         creds_data = json.loads(google_creds_json)
         
