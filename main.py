@@ -113,8 +113,11 @@ def init_google_sheets():
         logger.info("✅ Google Sheets initialized successfully")
         return True
         
+    except json.JSONDecodeError as e:
+        logger.error(f"❌ Invalid JSON in GOOGLE_CREDENTIALS_JSON: {e}")
+        return False
     except Exception as e:
-        logger.error(f"Google Sheets initialization failed: {e}")
+        logger.error(f"❌ Google Sheets initialization failed: {e}")
         return False
 
 def log_user_activity(user_id, username, first_name, last_name, language, action, message_type, content):
@@ -373,18 +376,35 @@ def test_sheets():
         return {"error": str(e)}
 
 if __name__ == '__main__':
-    logger.info("🚀 Starting BuyerChina Bot with Google Sheets integration...")
-    
-    # Инициализируем Google Sheets
-    if init_google_sheets():
-        logger.info("✅ Google Sheets integration enabled")
-    else:
-        logger.warning("⚠️ Google Sheets integration disabled")
-    
-    # Настраиваем webhook при запуске
-    setup_webhook()
-    
-    # Запускаем Flask приложение
-    port = int(os.getenv('PORT', 5000))
-    logger.info(f"🚀 Starting server on port {port}")
-    app.run(host='0.0.0.0', port=port, debug=False)
+    try:
+        logger.info("🚀 Starting BuyerChina Bot with Google Sheets integration...")
+        
+        # Инициализируем Google Sheets
+        try:
+            if init_google_sheets():
+                logger.info("✅ Google Sheets integration enabled")
+            else:
+                logger.warning("⚠️ Google Sheets integration disabled - continuing without it")
+        except Exception as e:
+            logger.error(f"❌ Google Sheets setup failed: {e}")
+            logger.info("🔄 Continuing without Google Sheets...")
+        
+        # Настраиваем webhook при запуске
+        try:
+            setup_webhook()
+            logger.info("✅ Webhook setup completed")
+        except Exception as e:
+            logger.error(f"❌ Webhook setup failed: {e}")
+        
+        # Запускаем Flask приложение
+        port = int(os.getenv('PORT', 5000))
+        logger.info(f"🚀 Starting server on port {port}")
+        app.run(host='0.0.0.0', port=port, debug=False)
+        
+    except Exception as e:
+        logger.error(f"❌ Critical startup error: {e}")
+        logger.info("🔄 Attempting minimal startup...")
+        
+        # Минимальный запуск без дополнительных функций
+        port = int(os.getenv('PORT', 5000))
+        app.run(host='0.0.0.0', port=port, debug=False)
