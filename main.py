@@ -41,6 +41,8 @@ def send_message(chat_id, text):
 def notify_manager(user_id, username, user_name, message_type, content):
     """Уведомление менеджера о новом запросе"""
     try:
+        logger.info(f"🔔 Attempting to notify manager {MANAGER_CHAT_ID}")
+        
         if message_type == "photo":
             notification_text = (
                 f"📸 НОВЫЙ ЗАПРОС - ФОТО\n\n"
@@ -58,13 +60,20 @@ def notify_manager(user_id, username, user_name, message_type, content):
                 f"⏰ Требуется связаться в течение 15 минут!"
             )
         
+        logger.info(f"📤 Sending notification to manager: {notification_text[:100]}...")
+        
         # Отправляем уведомление менеджеру
-        send_message(MANAGER_CHAT_ID, notification_text)
-        logger.info(f"✅ Manager notified about request from user {user_id}")
-        return True
+        result = send_message(MANAGER_CHAT_ID, notification_text)
+        
+        if result:
+            logger.info(f"✅ Manager notification sent successfully to {MANAGER_CHAT_ID}")
+            return True
+        else:
+            logger.error(f"❌ Failed to send notification to {MANAGER_CHAT_ID}")
+            return False
         
     except Exception as e:
-        logger.error(f"❌ Failed to notify manager: {e}")
+        logger.error(f"❌ Exception in notify_manager: {e}")
         return False
 
 def setup_webhook():
@@ -97,6 +106,24 @@ def setup_webhook():
 @app.route('/')
 def health():
     return "BuyerChina Bot is running!", 200
+
+@app.route('/test_manager')
+def test_manager():
+    """Тест уведомления менеджера"""
+    try:
+        test_result = notify_manager(
+            user_id="TEST123",
+            username="testuser", 
+            user_name="Тестовый пользователь",
+            message_type="text",
+            content="Тестовое сообщение для проверки уведомлений"
+        )
+        if test_result:
+            return f"✅ Тест успешен! Уведомление отправлено менеджеру {MANAGER_CHAT_ID}"
+        else:
+            return "❌ Ошибка отправки уведомления"
+    except Exception as e:
+        return f"❌ Ошибка теста: {e}"
 
 @app.route('/set_webhook')
 def manual_webhook():
