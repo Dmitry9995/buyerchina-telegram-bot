@@ -27,10 +27,93 @@ MANAGER_CHAT_ID = os.getenv('MANAGER_CHAT_ID', '1169659218')  # ID чата ме
 
 def create_order_id(user_id):
     """Создание ID заказа без Google Sheets"""
-    timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-    order_id = f"ORD-{user_id}-{timestamp}"
-    logger.info(f"✅ Created order ID: {order_id}")
-    return order_id
+    try:
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+        order_id = f"ORD-{user_id}-{timestamp}"
+        logger.info(f"✅ Created order ID: {order_id}")
+        return order_id
+    except Exception as e:
+        logger.error(f"Error creating order ID: {e}")
+        return "ORD-ERROR"
+
+def send_message(chat_id, text):
+    """Отправка сообщения в Telegram"""
+    try:
+        url = f"{BOT_URL}/sendMessage"
+        data = {
+            'chat_id': chat_id,
+            'text': text,
+            'parse_mode': 'Markdown'
+        }
+        response = requests.post(url, json=data, timeout=10)
+        logger.info(f"Message sent to {chat_id}: {response.status_code}")
+        return response.json()
+    except Exception as e:
+        logger.error(f"Send message error: {e}")
+        return None
+
+def notify_manager(user_id, username, user_name, message_type, content, order_id=None):
+    """Уведомление менеджера о новом запросе"""
+    try:
+        if message_type == "photo":
+            notification_text = (
+                f"📸 *НОВЫЙ ЗАПРОС - ФОТО*\n\n"
+                f"👤 Пользователь: {user_name} (@{username if username else 'без username'})\n"
+                f"🆔 ID: `{user_id}`\n"
+                f"📋 Заказ: `{order_id if order_id else 'N/A'}`\n\n"
+                f"📝 Пользователь загрузил фото товара для поиска аналогов в Китае.\n\n"
+                f"⏰ *Требуется связаться в течение 15 минут!*"
+            )
+        else:
+            notification_text = (
+                f"📝 *НОВЫЙ ЗАПРОС - ТЕКСТ*\n\n"
+                f"👤 Пользователь: {user_name} (@{username if username else 'без username'})\n"
+                f"🆔 ID: `{user_id}`\n"
+                f"📋 Заказ: `{order_id if order_id else 'N/A'}`\n\n"
+                f"💬 Запрос: _{content[:200] if content else 'N/A'}..._\n\n"
+                f"⏰ *Требуется связаться в течение 15 минут!*"
+            )
+        
+        # Отправляем уведомление менеджеру
+        send_message(MANAGER_CHAT_ID, notification_text)
+        logger.info(f"✅ Manager notified about request from user {user_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to notify manager: {e}")
+        return False
+
+def setup_webhook():
+    """Настройка webhook для Railway"""
+    try:
+        # Получаем URL от Railway
+        railway_url = os.getenv('RAILWAY_PUBLIC_DOMAIN')
+        if railway_url:
+            webhook_url = f"https://{railway_url}/webhook"
+        else:
+            # Fallback URL - нужно заменить на ваш реальный URL
+            webhook_url = f"https://web-production-ea35.up.railway.app/webhook"
+        
+        # Удаляем старый webhook
+        delete_url = f"{BOT_URL}/deleteWebhook"
+        requests.post(delete_url, timeout=10)
+        
+        # Устанавливаем новый webhook
+        set_url = f"{BOT_URL}/setWebhook"
+        data = {'url': webhook_url}
+        response = requests.post(set_url, json=data, timeout=10)
+        result = response.json()
+        
+        if result.get('ok'):
+            logger.info(f"✅ Webhook set: {webhook_url}")
+            return True
+        else:
+            logger.error(f"❌ Webhook failed: {result}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Webhook setup error: {e}")
+        return False
 
 @app.route('/')
 def health():
