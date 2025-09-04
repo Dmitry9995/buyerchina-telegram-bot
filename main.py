@@ -109,6 +109,7 @@ def init_google_sheets():
 def log_user_activity(user_id, username, first_name, last_name, language, action, message_type, content):
     """Логирование активности пользователя в Google Sheets"""
     if not google_sheets:
+        logger.warning("Google Sheets not available for logging user activity")
         return False
     
     try:
@@ -116,8 +117,8 @@ def log_user_activity(user_id, username, first_name, last_name, language, action
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         row = [
-            timestamp, user_id, username or "", first_name or "", last_name or "",
-            language or "", action, message_type, content[:100] if content else ""
+            str(timestamp), str(user_id), str(username or ""), str(first_name or ""), str(last_name or ""),
+            str(language or ""), str(action), str(message_type), str(content[:100] if content else "")
         ]
         
         users_sheet.append_row(row)
@@ -125,13 +126,14 @@ def log_user_activity(user_id, username, first_name, last_name, language, action
         return True
         
     except Exception as e:
-        logger.error(f"Failed to log user activity: {e}")
+        logger.error(f"❌ Failed to log user activity: {e}")
         return False
 
 def create_order(user_id, username, product, description, price, supplier):
     """Создание заказа в Google Sheets"""
     if not google_sheets:
-        return False
+        logger.warning("Google Sheets not available for creating order")
+        return None
     
     try:
         orders_sheet = google_sheets.worksheet("Orders")
@@ -139,8 +141,8 @@ def create_order(user_id, username, product, description, price, supplier):
         order_id = f"ORD-{user_id}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
         
         row = [
-            timestamp, user_id, username or "", product, description,
-            price, supplier, "New", order_id, ""
+            str(timestamp), str(user_id), str(username or ""), str(product), str(description),
+            str(price), str(supplier), "New", str(order_id), ""
         ]
         
         orders_sheet.append_row(row)
@@ -148,7 +150,7 @@ def create_order(user_id, username, product, description, price, supplier):
         return order_id
         
     except Exception as e:
-        logger.error(f"Failed to create order: {e}")
+        logger.error(f"❌ Failed to create order: {e}")
         return None
 
 @app.route('/')
@@ -319,6 +321,45 @@ def sheets_status():
             return {"status": "error", "error": str(e)}
     else:
         return {"status": "not_connected", "message": "Google Sheets not initialized"}
+
+@app.route('/test_sheets')
+def test_sheets():
+    """Тестирование записи в Google Sheets"""
+    if not google_sheets:
+        return {"error": "Google Sheets not connected"}
+    
+    try:
+        # Тестируем запись в Users
+        test_result = log_user_activity(
+            user_id=1169659218,
+            username="test_user", 
+            first_name="Test",
+            last_name="User",
+            language="ru",
+            action="test_action",
+            message_type="test",
+            content="Test message from /test_sheets endpoint"
+        )
+        
+        # Тестируем создание заказа
+        order_id = create_order(
+            user_id=1169659218,
+            username="test_user",
+            product="Test Product",
+            description="Test order from /test_sheets endpoint", 
+            price="$10.00",
+            supplier="Test Supplier"
+        )
+        
+        return {
+            "user_activity_logged": test_result,
+            "order_created": order_id,
+            "sheet_url": f"https://docs.google.com/spreadsheets/d/{google_sheets.id}"
+        }
+        
+    except Exception as e:
+        logger.error(f"Test sheets error: {e}")
+        return {"error": str(e)}
 
 if __name__ == '__main__':
     logger.info("🚀 Starting BuyerChina Bot with Google Sheets integration...")
