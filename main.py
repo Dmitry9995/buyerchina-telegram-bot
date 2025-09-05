@@ -27,7 +27,7 @@ BOT_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 logger.info(f"Bot initialized: {BOT_TOKEN[:10]}...")
 
 # Настройки менеджера
-MANAGER_CHAT_ID = os.getenv('MANAGER_CHAT_ID', '1169659218')
+MANAGER_CHAT_ID = int(os.getenv('MANAGER_CHAT_ID', '1169659218'))
 logger.info(f"Manager chat ID: {MANAGER_CHAT_ID}")
 
 def send_message(chat_id, text, parse_mode=None):
@@ -35,14 +35,15 @@ def send_message(chat_id, text, parse_mode=None):
     try:
         url = f"{BOT_URL}/sendMessage"
         data = {
-            'chat_id': str(chat_id),
+            'chat_id': int(chat_id) if str(chat_id).isdigit() else str(chat_id),
             'text': text
         }
         if parse_mode:
             data['parse_mode'] = parse_mode
         
-        logger.info(f"Sending message to chat_id: {chat_id}")
+        logger.info(f"Sending message to chat_id: {chat_id} (type: {type(chat_id)})")
         logger.info(f"Message text: {text[:100]}...")
+        logger.info(f"Request data: {data}")
         
         response = requests.post(url, json=data, timeout=15)
         result = response.json()
@@ -50,9 +51,28 @@ def send_message(chat_id, text, parse_mode=None):
         logger.info(f"Response status: {response.status_code}")
         logger.info(f"Response body: {result}")
         
+        # Дополнительная диагностика ошибок
+        if not result.get('ok'):
+            error_code = result.get('error_code')
+            description = result.get('description', 'Unknown error')
+            logger.error(f"❌ Telegram API Error {error_code}: {description}")
+            
+            if error_code == 403:
+                logger.error("❌ Bot blocked by user or invalid permissions")
+            elif error_code == 400:
+                logger.error("❌ Bad request - check chat_id and message format")
+            elif error_code == 429:
+                logger.error("❌ Too many requests - rate limited")
+        
         return result
+    except requests.exceptions.Timeout:
+        logger.error("❌ Request timeout - Telegram API not responding")
+        return None
+    except requests.exceptions.ConnectionError:
+        logger.error("❌ Connection error - check internet connection")
+        return None
     except Exception as e:
-        logger.error(f"Send message error: {e}")
+        logger.error(f"❌ Send message error: {e}")
         return None
 
 def is_real_order(text):
@@ -86,7 +106,7 @@ def is_real_order(text):
     return False
 
 def notify_manager(user_id, username, user_name, message_type, content):
-    """Уведомление менеджера с детальной диагностикой"""
+    """Уведомление менеджера с детальной диагностикой и повторными попытками"""
     try:
         logger.info(f"🔔 Starting notification process for manager {MANAGER_CHAT_ID}")
         
@@ -110,15 +130,32 @@ def notify_manager(user_id, username, user_name, message_type, content):
                 f"⏰ ТРЕБУЕТСЯ СВЯЗАТЬСЯ В ТЕЧЕНИЕ 15 МИНУТ!"
             )
         
-        logger.info("📤 Attempting to send notification to manager...")
-        result = send_message(MANAGER_CHAT_ID, notification_text)
+        # Попытки отправки с повторами
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            logger.info(f"📤 Attempting to send notification to manager (attempt {attempt + 1}/{max_attempts})...")
+            result = send_message(MANAGER_CHAT_ID, notification_text)
+            
+            if result and result.get('ok'):
+                logger.info(f"✅ Manager notification sent successfully on attempt {attempt + 1}")
+                return True
+            else:
+                error_description = result.get('description', 'Unknown error') if result else 'No response'
+                logger.warning(f"⚠️ Attempt {attempt + 1} failed: {error_description}")
+                
+                # Проверяем специфические ошибки
+                if result and result.get('error_code') == 403:
+                    logger.error("❌ Bot was blocked by manager! Manager needs to unblock the bot.")
+                    break
+                elif result and result.get('error_code') == 400:
+                    logger.error("❌ Invalid chat_id or message format!")
+                    break
+                
+                if attempt < max_attempts - 1:
+                    time.sleep(2)  # Пауза перед повтором
         
-        if result and result.get('ok'):
-            logger.info(f"✅ Manager notification sent successfully")
-            return True
-        else:
-            logger.error(f"❌ Failed to send notification: {result}")
-            return False
+        logger.error(f"❌ Failed to send notification after {max_attempts} attempts")
+        return False
         
     except Exception as e:
         logger.error(f"❌ Exception in notify_manager: {e}")
@@ -189,24 +226,54 @@ def health():
         "message": "BuyerChina Bot is running!"
     }), 200
 
+def check_manager_status():
+    """Проверка доступности менеджера"""
+    try:
+        # Проверяем информацию о чате
+        chat_info = get_chat_info(MANAGER_CHAT_ID)
+        if not chat_info or not chat_info.get('ok'):
+            return False, "Chat info unavailable"
+        
+        # Пробуем отправить тестовое сообщение
+        test_message = f"🔧 Проверка связи - {time.strftime('%H:%M:%S')}"
+        result = send_message(MANAGER_CHAT_ID, test_message)
+        
+        if result and result.get('ok'):
+            return True, "Manager available"
+        else:
+            error_code = result.get('error_code') if result else 'No response'
+            description = result.get('description') if result else 'Unknown error'
+            return False, f"Error {error_code}: {description}"
+            
+    except Exception as e:
+        return False, f"Exception: {str(e)}"
+
 @app.route('/debug_manager')
 def debug_manager():
     """Расширенная диагностика менеджера"""
     try:
         results = {}
         
-        # 1. Проверяем информацию о чате менеджера
+        # 1. Проверяем статус менеджера
+        logger.info(f"🔍 Checking manager status for {MANAGER_CHAT_ID}")
+        manager_available, status_message = check_manager_status()
+        results['manager_status'] = {
+            'available': manager_available,
+            'message': status_message
+        }
+        
+        # 2. Проверяем информацию о чате менеджера
         logger.info(f"🔍 Getting chat info for manager {MANAGER_CHAT_ID}")
         chat_info = get_chat_info(MANAGER_CHAT_ID)
         results['chat_info'] = chat_info
         
-        # 2. Пробуем отправить простое сообщение
+        # 3. Пробуем отправить простое сообщение
         logger.info("📤 Attempting to send test message")
         test_message = f"🧪 ТЕСТ СОЕДИНЕНИЯ - {time.strftime('%H:%M:%S')}"
         send_result = send_message(MANAGER_CHAT_ID, test_message)
         results['send_test'] = send_result
         
-        # 3. Пробуем отправить полное уведомление
+        # 4. Пробуем отправить полное уведомление
         time.sleep(1)
         logger.info("📤 Attempting to send full notification")
         notification_result = notify_manager(
@@ -218,11 +285,24 @@ def debug_manager():
         )
         results['notification_test'] = notification_result
         
+        # 5. Рекомендации по исправлению
+        recommendations = []
+        if not manager_available:
+            if 'blocked' in status_message.lower() or '403' in status_message:
+                recommendations.append("Менеджер заблокировал бота. Нужно разблокировать бота в Telegram.")
+            elif '400' in status_message:
+                recommendations.append("Неверный MANAGER_CHAT_ID. Проверьте правильность ID.")
+            else:
+                recommendations.append("Проблема с подключением к Telegram API или неверные настройки.")
+        
+        results['recommendations'] = recommendations
+        
         return jsonify({
             "manager_id": MANAGER_CHAT_ID,
             "timestamp": time.strftime('%Y-%m-%d %H:%M:%S'),
             "tests": results,
-            "status": "success" if results.get('send_test', {}).get('ok') else "failed"
+            "status": "success" if manager_available else "failed",
+            "summary": f"Manager {'доступен' if manager_available else 'недоступен'}: {status_message}"
         })
         
     except Exception as e:
