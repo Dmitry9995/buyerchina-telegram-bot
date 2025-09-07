@@ -7,6 +7,8 @@ import json
 from flask import Flask, request, jsonify
 import requests
 import time
+import mimetypes
+from urllib.parse import urlparse
 
 # Настройка логирования
 logging.basicConfig(
@@ -29,6 +31,68 @@ logger.info(f"Bot initialized: {BOT_TOKEN[:10]}...")
 # Настройки менеджера
 MANAGER_CHAT_ID = int(os.getenv('MANAGER_CHAT_ID', '1169659218'))
 logger.info(f"Manager chat ID: {MANAGER_CHAT_ID}")
+
+def get_file_info(file_id):
+    """Получение информации о файле"""
+    try:
+        url = f"{BOT_URL}/getFile"
+        data = {'file_id': file_id}
+        response = requests.post(url, json=data, timeout=15)
+        result = response.json()
+        
+        if result.get('ok'):
+            return result['result']
+        else:
+            logger.error(f"Failed to get file info: {result}")
+            return None
+    except Exception as e:
+        logger.error(f"Get file info error: {e}")
+        return None
+
+def download_file(file_path):
+    """Скачивание файла с серверов Telegram"""
+    try:
+        file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+        response = requests.get(file_url, timeout=30)
+        
+        if response.status_code == 200:
+            return response.content
+        else:
+            logger.error(f"Failed to download file: {response.status_code}")
+            return None
+    except Exception as e:
+        logger.error(f"Download file error: {e}")
+        return None
+
+def get_file_type_info(file_name):
+    """Определение типа файла и его описания"""
+    if not file_name:
+        return "unknown", "Неизвестный файл"
+    
+    file_name_lower = file_name.lower()
+    
+    # Изображения
+    if any(file_name_lower.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']):
+        return "photo", "📸 Изображение"
+    
+    # Excel файлы
+    elif any(file_name_lower.endswith(ext) for ext in ['.xlsx', '.xls', '.xlsm']):
+        return "excel", "📊 Excel таблица"
+    
+    # PDF файлы
+    elif file_name_lower.endswith('.pdf'):
+        return "pdf", "📄 PDF документ"
+    
+    # Word файлы
+    elif any(file_name_lower.endswith(ext) for ext in ['.docx', '.doc']):
+        return "word", "📝 Word документ"
+    
+    # Другие документы
+    elif any(file_name_lower.endswith(ext) for ext in ['.txt', '.rtf']):
+        return "document", "📄 Текстовый документ"
+    
+    else:
+        return "other", "📎 Файл"
 
 def send_message(chat_id, text, parse_mode=None):
     """Отправка сообщений с детальной диагностикой"""
@@ -105,18 +169,30 @@ def is_real_order(text):
     
     return False
 
-def notify_manager(user_id, username, user_name, message_type, content):
+def notify_manager(user_id, username, user_name, message_type, content, file_info=None):
     """Уведомление менеджера с детальной диагностикой и повторными попытками"""
     try:
         logger.info(f"🔔 Starting notification process for manager {MANAGER_CHAT_ID}")
         
-        if message_type == "photo":
+        if message_type in ["photo", "document"]:
+            file_type_desc = "📸 фото товара"
+            if file_info:
+                file_type, file_desc = get_file_type_info(file_info.get('file_name', ''))
+                if file_type == "excel":
+                    file_type_desc = "📊 Excel таблицу с товарами"
+                elif file_type == "pdf":
+                    file_type_desc = "📄 PDF документ с товарами"
+                elif file_type == "word":
+                    file_type_desc = "📝 Word документ с товарами"
+                else:
+                    file_type_desc = f"{file_desc} ({file_info.get('file_name', 'без названия')})"
+            
             notification_text = (
-                f"🚨 НОВЫЙ ЗАПРОС - ФОТО\n\n"
+                f"🚨 НОВЫЙ ЗАПРОС - ФАЙЛ\n\n"
                 f"👤 Пользователь: {user_name}\n"
                 f"📱 Username: @{username if username else 'не указан'}\n"
                 f"🆔 ID: {user_id}\n\n"
-                f"📸 Пользователь загрузил фото товара для поиска аналогов в Китае.\n\n"
+                f"📎 Пользователь загрузил {file_type_desc} для поиска товаров в Китае.\n\n"
                 f"⏰ ТРЕБУЕТСЯ СВЯЗАТЬСЯ В ТЕЧЕНИЕ 15 МИНУТ!"
             )
         else:
@@ -415,7 +491,10 @@ def webhook():
                 f"Ваш помощник для покупок в Китае.\n\n"
                 f"Отправьте:\n"
                 f"📸 Фото товара\n"
-                f"📝 Описание того, что ищете\n\n"
+                f"📝 Описание того, что ищете\n"
+                f"📊 Excel файл с товарами\n"
+                f"📄 PDF каталог\n"
+                f"📝 Word документ\n\n"
                 f"Наш менеджер свяжется с вами в течение 15 минут!"
             )
             send_message(chat_id, welcome_text)
@@ -424,12 +503,68 @@ def webhook():
         elif 'photo' in message:
             logger.info(f"📸 Photo received from {user_name}")
             
-            notification_sent = notify_manager(user_id, username, user_name, "photo", "Фото для поиска товара")
+            # Получаем информацию о самом большом фото
+            photos = message['photo']
+            largest_photo = max(photos, key=lambda x: x.get('file_size', 0))
+            file_id = largest_photo['file_id']
+            
+            # Получаем информацию о файле
+            file_info = get_file_info(file_id)
+            logger.info(f"Photo file info: {file_info}")
+            
+            notification_sent = notify_manager(user_id, username, user_name, "photo", "Фото для поиска товара", file_info)
             
             response_text = (
                 f"📸 Спасибо за фото, {user_name}!\n\n"
                 f"✅ Ваша заявка принята в обработку.\n\n"
                 f"👨‍💼 Наш менеджер {'уже получил уведомление' if notification_sent else 'получит уведомление'} и свяжется с вами в ближайшие 15 минут."
+            )
+            send_message(chat_id, response_text)
+            
+        # Обработка документов
+        elif 'document' in message:
+            document = message['document']
+            file_name = document.get('file_name', 'Без названия')
+            file_size = document.get('file_size', 0)
+            file_id = document['file_id']
+            
+            logger.info(f"📎 Document received from {user_name}: {file_name} ({file_size} bytes)")
+            
+            # Определяем тип файла
+            file_type, file_desc = get_file_type_info(file_name)
+            
+            # Проверяем поддерживаемые типы
+            supported_types = ['excel', 'pdf', 'word', 'document']
+            if file_type not in supported_types:
+                response_text = (
+                    f"❌ Извините, {user_name}!\n\n"
+                    f"Файл '{file_name}' не поддерживается.\n\n"
+                    f"Поддерживаемые форматы:\n"
+                    f"📊 Excel: .xlsx, .xls\n"
+                    f"📄 PDF: .pdf\n"
+                    f"📝 Word: .docx, .doc\n"
+                    f"📸 Изображения: .jpg, .png, .gif\n\n"
+                    f"Пожалуйста, отправьте файл в поддерживаемом формате."
+                )
+                send_message(chat_id, response_text)
+                return "OK", 200
+            
+            # Получаем информацию о файле
+            file_info = get_file_info(file_id)
+            if file_info:
+                file_info['file_name'] = file_name
+                file_info['file_type'] = file_type
+            
+            logger.info(f"Document file info: {file_info}")
+            
+            notification_sent = notify_manager(user_id, username, user_name, "document", f"Документ: {file_name}", file_info)
+            
+            response_text = (
+                f"{file_desc} получен, {user_name}!\n\n"
+                f"📎 Файл: {file_name}\n"
+                f"📏 Размер: {file_size // 1024} КБ\n\n"
+                f"✅ Ваша заявка принята в обработку.\n\n"
+                f"👨‍💼 Наш менеджер {'уже получил уведомление' if notification_sent else 'получит уведомление'} и обработает ваш документ в ближайшие 15 минут."
             )
             send_message(chat_id, response_text)
             
@@ -458,7 +593,10 @@ def webhook():
                     f"Привет, {user_name}! 👋\n\n"
                     f"Для поиска товаров в Китае:\n"
                     f"📸 Отправьте фото товара\n"
-                    f"📝 Или опишите что ищете\n\n"
+                    f"📝 Опишите что ищете\n"
+                    f"📊 Отправьте Excel файл\n"
+                    f"📄 Отправьте PDF каталог\n"
+                    f"📝 Отправьте Word документ\n\n"
                     f"Например:\n"
                     f"• \"Хочу найти беспроводные наушники\"\n"
                     f"• \"Нужна куртка как на фото\"\n"
