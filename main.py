@@ -139,6 +139,52 @@ def send_message(chat_id, text, parse_mode=None):
         logger.error(f"❌ Send message error: {e}")
         return None
 
+def send_photo(chat_id, file_id, caption=None):
+    """Отправка фото по file_id"""
+    try:
+        url = f"{BOT_URL}/sendPhoto"
+        data = {
+            'chat_id': int(chat_id) if str(chat_id).isdigit() else str(chat_id),
+            'photo': file_id
+        }
+        if caption:
+            data['caption'] = caption
+        
+        logger.info(f"Sending photo to chat_id: {chat_id}, file_id: {file_id}")
+        
+        response = requests.post(url, json=data, timeout=15)
+        result = response.json()
+        
+        logger.info(f"Photo send result: {result}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Send photo error: {e}")
+        return None
+
+def send_document(chat_id, file_id, caption=None):
+    """Отправка документа по file_id"""
+    try:
+        url = f"{BOT_URL}/sendDocument"
+        data = {
+            'chat_id': int(chat_id) if str(chat_id).isdigit() else str(chat_id),
+            'document': file_id
+        }
+        if caption:
+            data['caption'] = caption
+        
+        logger.info(f"Sending document to chat_id: {chat_id}, file_id: {file_id}")
+        
+        response = requests.post(url, json=data, timeout=15)
+        result = response.json()
+        
+        logger.info(f"Document send result: {result}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Send document error: {e}")
+        return None
+
 def is_real_order(text):
     """Проверка является ли сообщение реальным заказом"""
     if not text or len(text.strip()) < 5:
@@ -169,7 +215,7 @@ def is_real_order(text):
     
     return False
 
-def notify_manager(user_id, username, user_name, message_type, content, file_info=None):
+def notify_manager(user_id, username, user_name, message_type, content, file_info=None, file_id=None):
     """Уведомление менеджера с детальной диагностикой и повторными попытками"""
     try:
         logger.info(f"🔔 Starting notification process for manager {MANAGER_CHAT_ID}")
@@ -208,13 +254,16 @@ def notify_manager(user_id, username, user_name, message_type, content, file_inf
         
         # Попытки отправки с повторами
         max_attempts = 3
+        notification_sent = False
+        
         for attempt in range(max_attempts):
             logger.info(f"📤 Attempting to send notification to manager (attempt {attempt + 1}/{max_attempts})...")
             result = send_message(MANAGER_CHAT_ID, notification_text)
             
             if result and result.get('ok'):
                 logger.info(f"✅ Manager notification sent successfully on attempt {attempt + 1}")
-                return True
+                notification_sent = True
+                break
             else:
                 error_description = result.get('description', 'Unknown error') if result else 'No response'
                 logger.warning(f"⚠️ Attempt {attempt + 1} failed: {error_description}")
@@ -230,8 +279,24 @@ def notify_manager(user_id, username, user_name, message_type, content, file_inf
                 if attempt < max_attempts - 1:
                     time.sleep(2)  # Пауза перед повтором
         
-        logger.error(f"❌ Failed to send notification after {max_attempts} attempts")
-        return False
+        # Если уведомление отправлено и есть файл - отправляем файл
+        if notification_sent and file_id and message_type in ["photo", "document"]:
+            logger.info(f"📎 Sending file to manager: {file_id}")
+            
+            if message_type == "photo":
+                file_result = send_photo(MANAGER_CHAT_ID, file_id, f"Файл от пользователя {user_name} (ID: {user_id})")
+            else:
+                file_result = send_document(MANAGER_CHAT_ID, file_id, f"Файл от пользователя {user_name} (ID: {user_id})")
+            
+            if file_result and file_result.get('ok'):
+                logger.info("✅ File sent to manager successfully")
+            else:
+                logger.error(f"❌ Failed to send file to manager: {file_result}")
+        
+        if not notification_sent:
+            logger.error(f"❌ Failed to send notification after {max_attempts} attempts")
+        
+        return notification_sent
         
     except Exception as e:
         logger.error(f"❌ Exception in notify_manager: {e}")
@@ -513,7 +578,7 @@ def webhook():
             file_info = get_file_info(file_id)
             logger.info(f"Photo file info: {file_info}")
             
-            notification_sent = notify_manager(user_id, username, user_name, "photo", "Фото для поиска товара", file_info)
+            notification_sent = notify_manager(user_id, username, user_name, "photo", "Фото для поиска товара", file_info, file_id)
             
             response_text = (
                 f"📸 Спасибо за фото, {user_name}!\n\n"
@@ -558,7 +623,7 @@ def webhook():
             
             logger.info(f"Document file info: {file_info}")
             
-            notification_sent = notify_manager(user_id, username, user_name, "document", f"Документ: {file_name}", file_info)
+            notification_sent = notify_manager(user_id, username, user_name, "document", f"Документ: {file_name}", file_info, file_id)
             
             response_text = (
                 f"{file_desc} получен, {user_name}!\n\n"
